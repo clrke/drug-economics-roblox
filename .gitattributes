@@ -1,0 +1,3 @@
+# Treat Roblox files as binary
+*.rbxl binary
+*.rbxlx binary

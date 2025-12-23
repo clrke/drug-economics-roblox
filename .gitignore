@@ -1,0 +1,9 @@
+# Roblox lock files
+*.lock
+
+# Backup files
+*.rbxl.bak
+*.rbxlx.bak
+
+# Roblox Studio temp files
+*.rbxm
