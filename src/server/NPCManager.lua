@@ -485,8 +485,9 @@ function NPCManager:TryCure(villagerIndex, medicineId)
 end
 
 -- Process new day: give new sicknesses to healthy villagers
+-- NOTE: CurrentDay is already set by GameManager via SetCurrentDay before calling this
 function NPCManager:ProcessNewDay()
-	CurrentDay = CurrentDay + 1
+	-- Reset phase tracking for new day (do NOT increment CurrentDay here - GameManager does it)
 	CurrentPhaseIsDay = true
 	CurrentPhaseElapsed = 0
 

@@ -751,11 +751,21 @@ local GameOverMessage = CreateLabel({
 
 local GameOverStats = CreateLabel({
 	Name = "Stats",
-	Size = UDim2.new(1, -20, 0, 80),
+	Size = UDim2.new(1, -20, 0, 50),
 	Position = UDim2.new(0, 10, 0, 130),
 	Text = "You survived 0 days",
 	TextSize = 28,
 	TextColor3 = Color3.fromRGB(255, 220, 100),
+	Parent = GameOverPanel,
+})
+
+local GameOverRestartLabel = CreateLabel({
+	Name = "RestartLabel",
+	Size = UDim2.new(1, -20, 0, 40),
+	Position = UDim2.new(0, 10, 0, 190),
+	Text = "Restarting in 10...",
+	TextSize = 20,
+	TextColor3 = Color3.fromRGB(180, 180, 180),
 	Parent = GameOverPanel,
 })
 
@@ -963,7 +973,7 @@ local function HasValidMedicine(medicineId)
 	return false
 end
 
-local function UpdateVillagerPanel(villagerIndex)
+local function UpdateVillagerPanel(villagerIndex, isNewOpen)
 	local data = VillagerData[villagerIndex]
 	if not data then
 		VillagerPanel.Visible = false
@@ -972,8 +982,11 @@ local function UpdateVillagerPanel(villagerIndex)
 
 	VillagerTitle.Text = data.DisplayName or ("Villager " .. villagerIndex)
 
-	-- Get emotional dialogue
-	VillagerDialogue.Text = '"' .. GetEmotionalDialogue(data) .. '"'
+	-- Only generate new dialogue when panel first opens, not on every update
+	if isNewOpen or not currentVillagerDialogue then
+		currentVillagerDialogue = GetEmotionalDialogue(data)
+	end
+	VillagerDialogue.Text = '"' .. currentVillagerDialogue .. '"'
 
 	if not data.IsAlive then
 		VillagerStatus.Text = "DECEASED"
@@ -1010,11 +1023,27 @@ local function UpdateVillagerPanel(villagerIndex)
 			VillagerDialogue.TextColor3 = Color3.fromRGB(255, 150, 150)
 		end
 
-		-- Cure button
+		-- Cure button - show payment amount
 		local hasNeeded = data.NeededMedicineId and HasValidMedicine(data.NeededMedicineId)
 		VillagerCureBtn.Visible = true
 		VillagerCureBtn.BackgroundColor3 = hasNeeded and Color3.fromRGB(0, 150, 50) or Color3.fromRGB(80, 80, 80)
-		VillagerCureBtn.Text = hasNeeded and "CURE" or "NO MEDICINE"
+
+		-- Get payment amount (sell price for the medicine)
+		local paymentAmount = 0
+		if data.NeededMedicineId and MedicinePrices[data.NeededMedicineId] then
+			paymentAmount = MedicinePrices[data.NeededMedicineId]
+		elseif data.NeededMedicineId then
+			local medicine = MedicineData.ByID[data.NeededMedicineId]
+			if medicine then
+				paymentAmount = medicine.basePrice
+			end
+		end
+
+		if hasNeeded then
+			VillagerCureBtn.Text = "CURE (+$" .. paymentAmount .. ")"
+		else
+			VillagerCureBtn.Text = "NO MEDICINE"
+		end
 	else
 		VillagerStatus.Text = "HEALTHY"
 		VillagerStatus.TextColor3 = Color3.fromRGB(100, 255, 100)
@@ -1125,6 +1154,7 @@ end
 
 -- === BUTTON HANDLERS ===
 local currentVillagerIndex = nil
+local currentVillagerDialogue = nil  -- Store dialogue so it doesn't change every second
 
 VillagerCureBtn.MouseButton1Click:Connect(function()
 	if not currentVillagerIndex then return end
@@ -1156,9 +1186,9 @@ UpdatePlayer.OnClientEvent:Connect(function(data)
 	UpdateTopBar()
 	UpdateInventoryUI()
 
-	-- Update panels if open
+	-- Update panels if open (not a new open, just refresh)
 	if VillagerPanel.Visible and currentVillagerIndex then
-		UpdateVillagerPanel(currentVillagerIndex)
+		UpdateVillagerPanel(currentVillagerIndex, false)
 	end
 	if MerchantPanel.Visible then
 		UpdateMerchantPanel()
@@ -1167,8 +1197,9 @@ end)
 
 UpdateVillagers.OnClientEvent:Connect(function(data)
 	VillagerData = data
+	-- Only update HP bar and status, not dialogue (not a new open)
 	if VillagerPanel.Visible and currentVillagerIndex then
-		UpdateVillagerPanel(currentVillagerIndex)
+		UpdateVillagerPanel(currentVillagerIndex, false)
 	end
 end)
 
@@ -1212,6 +1243,31 @@ GameOver.OnClientEvent:Connect(function(data)
 	GameOverStats.Text = "You survived " .. data.survivalDays .. " days"
 	CloseAllPanels()
 	GameOverPanel.Visible = true
+
+	-- 10-second restart countdown
+	task.spawn(function()
+		for i = 10, 1, -1 do
+			GameOverRestartLabel.Text = "Restarting in " .. i .. "..."
+			task.wait(1)
+		end
+		GameOverRestartLabel.Text = "Restarting..."
+
+		-- Reset client state
+		IsGameOver = false
+		GameOverPanel.Visible = false
+		GameState = "Lobby"
+		LobbyUI.Visible = true
+		TopBar.Visible = false
+		currentVillagerIndex = nil
+		currentVillagerDialogue = nil
+		PlayerMoney = 100
+		PlayerInventory = { valid = {}, expired = {} }
+		CurrentDay = 1
+		VillagerData = {}
+		UpdateTopBar()
+		UpdateInventoryUI()
+		UpdateLobbyUI()
+	end)
 end)
 
 Notification.OnClientEvent:Connect(function(data)
@@ -1360,9 +1416,10 @@ local function OnInteract()
 
 	if CurrentInteractTarget.type == "villager" then
 		currentVillagerIndex = CurrentInteractTarget.index
+		currentVillagerDialogue = nil  -- Reset dialogue for new interaction
 		-- Refresh villager data
 		VillagerData = GetVillagerData:InvokeServer() or {}
-		UpdateVillagerPanel(currentVillagerIndex)
+		UpdateVillagerPanel(currentVillagerIndex, true)  -- true = new open, generate new dialogue
 	elseif CurrentInteractTarget.type == "merchant" then
 		-- Refresh merchant stock
 		MerchantStock = GetMerchantStock:InvokeServer() or {}

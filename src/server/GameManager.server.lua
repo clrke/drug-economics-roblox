@@ -563,6 +563,49 @@ task.spawn(function()
 			})
 
 			NPCManager:StopHPDrain()
+
+			-- Wait 10 seconds then restart game
+			task.wait(10)
+			print("=== RESTARTING GAME ===")
+
+			-- Reset to lobby state
+			GameState = "Lobby"
+			LobbyCountdown = LOBBY_COUNTDOWN
+
+			-- Reset player data
+			for _, player in ipairs(Players:GetPlayers()) do
+				local data = PlayerData[player.UserId]
+				if data then
+					data.Inventory:ClearInventory()
+					EconomyManager:SetMoney(player, GameConfig.Economy.StartingMoney)
+				end
+			end
+
+			-- Teleport players back to lobby
+			local lobby = workspace:FindFirstChild("Lobby")
+			if lobby then
+				local lobbySpawn = lobby:FindFirstChild("LobbySpawn")
+				if lobbySpawn then
+					lobbySpawn.Enabled = true
+				end
+			end
+			local gameSpawn = workspace:FindFirstChild("SpawnLocation")
+			if gameSpawn then
+				gameSpawn.Enabled = false
+			end
+
+			for _, player in ipairs(Players:GetPlayers()) do
+				local character = player.Character
+				if character then
+					local hrp = character:FindFirstChild("HumanoidRootPart")
+					if hrp then
+						hrp.CFrame = CFrame.new(LOBBY_POSITION)
+					end
+				end
+			end
+
+			-- Restart lobby loop
+			RunLobbyLoop()
 		end
 	end
 end)
