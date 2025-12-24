@@ -136,7 +136,7 @@ function TestFramework.expect(value)
 	end
 
 	function expectation.toBeType(expected)
-		local actualType = typeof(value)
+		local actualType = (typeof and typeof(value)) or type(value)
 		if actualType ~= expected then
 			error("Expected type " .. tostring(expected) .. " but got " .. actualType)
 		end
