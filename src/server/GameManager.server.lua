@@ -9,9 +9,9 @@ local Lighting = game:GetService("Lighting")
 -- Wait for modules
 local GameConfig = require(ReplicatedStorage:WaitForChild("GameConfig"))
 local MedicineData = require(ReplicatedStorage:WaitForChild("MedicineData"))
-local InventoryManager = require(ServerScriptService.Modules:WaitForChild("InventoryManager"))
-local EconomyManager = require(ServerScriptService.Modules:WaitForChild("EconomyManager"))
-local NPCManager = require(ServerScriptService.Modules:WaitForChild("NPCManager"))
+local InventoryManager = require(ServerScriptService:WaitForChild("InventoryManager"))
+local EconomyManager = require(ServerScriptService:WaitForChild("EconomyManager"))
+local NPCManager = require(ServerScriptService:WaitForChild("NPCManager"))
 
 -- Create RemoteEvents folder
 local RemoteEvents = ReplicatedStorage:FindFirstChild("RemoteEvents")
@@ -45,6 +45,8 @@ local UpdateTime = CreateRemote("UpdateTime")
 local NewDay = CreateRemote("NewDay")
 local GameOver = CreateRemote("GameOver")
 local Notification = CreateRemote("Notification")
+local UpdateLobby = CreateRemote("UpdateLobby")
+local StartGameEvent = CreateRemote("StartGame")
 
 -- === REMOTE FUNCTIONS ===
 local GetPlayerData = CreateRemote("GetPlayerData", true)
@@ -52,8 +54,16 @@ local GetVillagerData = CreateRemote("GetVillagerData", true)
 local GetMerchantStock = CreateRemote("GetMerchantStock", true)
 local GetPrices = CreateRemote("GetPrices", true)
 local GetInventoryDisplay = CreateRemote("GetInventoryDisplay", true)
+local GetLobbyState = CreateRemote("GetLobbyState", true)
+
+-- === LOBBY CONFIG ===
+local LOBBY_COUNTDOWN = 15  -- Seconds to wait after min players
+local MIN_PLAYERS = 1  -- Minimum players to start countdown
+local LOBBY_POSITION = Vector3.new(0, 503, 10)  -- Lobby spawn position
 
 -- === GAME STATE ===
+local GameState = "Lobby"  -- "Lobby" or "Playing"
+local LobbyCountdown = LOBBY_COUNTDOWN
 local CurrentDay = 1
 local IsDay = true  -- true = day, false = night
 local TimeRemaining = GameConfig.Time.DayDuration
@@ -99,12 +109,64 @@ local function BroadcastVillagers()
 			Sickness = villager.Sickness,
 			NeededMedicine = villager.NeededMedicine and villager.NeededMedicine.name or nil,
 			NeededMedicineId = villager.NeededMedicine and villager.NeededMedicine.id or nil,
-			HP = villager.HP,
+			HP = NPCManager:GetVillagerHP(index),  -- Calculate HP from game time
 			MaxHP = GameConfig.Villager.MaxHP,
 			IsAlive = villager.IsAlive,
 		}
 	end
 	BroadcastToAll(UpdateVillagers, villagerData)
+end
+
+local function BroadcastLobbyState()
+	local playerCount = #Players:GetPlayers()
+	BroadcastToAll(UpdateLobby, {
+		state = GameState,
+		playerCount = playerCount,
+		minPlayers = MIN_PLAYERS,
+		countdown = LobbyCountdown,
+		countdownActive = playerCount >= MIN_PLAYERS,
+	})
+end
+
+local function TeleportPlayerToGame(player)
+	local character = player.Character
+	if character then
+		local hrp = character:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			-- Teleport near the tent
+			local tentPos = Vector3.new(-38, 5, 0.6)
+			hrp.CFrame = CFrame.new(tentPos + Vector3.new(math.random(-5, 5), 0, math.random(-5, 5)))
+		end
+	end
+end
+
+local function TeleportAllPlayersToGame()
+	-- Enable game spawn point
+	local gameSpawn = workspace:FindFirstChild("SpawnLocation")
+	if gameSpawn then
+		gameSpawn.Enabled = true
+	end
+
+	-- Disable lobby spawn
+	local lobby = workspace:FindFirstChild("Lobby")
+	if lobby then
+		local lobbySpawn = lobby:FindFirstChild("LobbySpawn")
+		if lobbySpawn then
+			lobbySpawn.Enabled = false
+		end
+	end
+
+	-- Teleport all players
+	for _, player in ipairs(Players:GetPlayers()) do
+		TeleportPlayerToGame(player)
+	end
+
+	-- Notify all players
+	BroadcastToAll(StartGameEvent, {})
+	BroadcastToAll(Notification, {
+		text = "Game starting! Save the villagers!",
+		color = "green"
+	})
 end
 
 -- === SET DAY/NIGHT LIGHTING ===
@@ -361,7 +423,7 @@ GetVillagerData.OnServerInvoke = function(player, villagerIndex)
 				Sickness = villager.Sickness,
 				NeededMedicine = villager.NeededMedicine and villager.NeededMedicine.name or nil,
 				NeededMedicineId = villager.NeededMedicine and villager.NeededMedicine.id or nil,
-				HP = villager.HP,
+				HP = NPCManager:GetVillagerHP(villagerIndex),  -- Calculate HP from game time
 				MaxHP = GameConfig.Villager.MaxHP,
 				IsAlive = villager.IsAlive,
 			}
@@ -376,7 +438,7 @@ GetVillagerData.OnServerInvoke = function(player, villagerIndex)
 			Sickness = villager.Sickness,
 			NeededMedicine = villager.NeededMedicine and villager.NeededMedicine.name or nil,
 			NeededMedicineId = villager.NeededMedicine and villager.NeededMedicine.id or nil,
-			HP = villager.HP,
+			HP = NPCManager:GetVillagerHP(index),  -- Calculate HP from game time
 			MaxHP = GameConfig.Villager.MaxHP,
 			IsAlive = villager.IsAlive,
 		}
@@ -398,18 +460,70 @@ GetInventoryDisplay.OnServerInvoke = function(player)
 	return data.Inventory:GetAllItemsForDisplay()
 end
 
--- === TIME LOOP ===
-task.spawn(function()
+GetLobbyState.OnServerInvoke = function(player)
+	local playerCount = #Players:GetPlayers()
+	return {
+		state = GameState,
+		playerCount = playerCount,
+		minPlayers = MIN_PLAYERS,
+		countdown = LobbyCountdown,
+		countdownActive = playerCount >= MIN_PLAYERS,
+	}
+end
+
+-- === LOBBY LOOP ===
+local function RunLobbyLoop()
+	print("=== Lobby started ===")
+	GameState = "Lobby"
+	LobbyCountdown = LOBBY_COUNTDOWN
+
+	while GameState == "Lobby" do
+		task.wait(1)
+
+		local playerCount = #Players:GetPlayers()
+
+		if playerCount >= MIN_PLAYERS then
+			-- Countdown active
+			LobbyCountdown = LobbyCountdown - 1
+			BroadcastLobbyState()
+
+			if LobbyCountdown <= 0 then
+				-- Start the game!
+				GameState = "Playing"
+				print("=== Lobby countdown complete, starting game ===")
+			end
+		else
+			-- Reset countdown if not enough players
+			LobbyCountdown = LOBBY_COUNTDOWN
+			BroadcastLobbyState()
+		end
+	end
+
+	-- Teleport players and start game
+	TeleportAllPlayersToGame()
+	task.wait(1)  -- Give time for teleport
 	InitializeGame()
+end
+
+-- === MAIN GAME LOOP ===
+task.spawn(function()
+	-- Run lobby first
+	RunLobbyLoop()
 
 	while GameRunning do
 		task.wait(1)
 		TimeRemaining = TimeRemaining - 1
 
-		-- Broadcast time every 10 seconds
-		if TimeRemaining % 10 == 0 then
-			SendTimeUpdate()
-		end
+		-- Calculate elapsed time in current phase
+		local phaseDuration = IsDay and GameConfig.Time.DayDuration or GameConfig.Time.NightDuration
+		local phaseElapsed = phaseDuration - TimeRemaining
+
+		-- Update NPCManager with game time (for HP calculation)
+		NPCManager:UpdateGameTime(CurrentDay, IsDay, phaseElapsed)
+
+		-- Broadcast time and villagers every second
+		SendTimeUpdate()
+		BroadcastVillagers()
 
 		-- Phase transition
 		if TimeRemaining <= 0 then

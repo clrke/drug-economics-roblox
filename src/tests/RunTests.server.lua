@@ -26,6 +26,7 @@ local testSpecs = {
 	"InventoryManager.spec",
 	"EconomyManager.spec",
 	"NPCManager.spec",
+	"BugFixTests",
 }
 
 -- Run each test spec

@@ -31,6 +31,8 @@ local UpdateTime = RemoteEvents:WaitForChild("UpdateTime")
 local NewDay = RemoteEvents:WaitForChild("NewDay")
 local GameOver = RemoteEvents:WaitForChild("GameOver")
 local Notification = RemoteEvents:WaitForChild("Notification")
+local UpdateLobby = RemoteEvents:WaitForChild("UpdateLobby")
+local StartGameEvent = RemoteEvents:WaitForChild("StartGame")
 
 -- Remote Functions
 local GetPlayerData = RemoteEvents:WaitForChild("GetPlayerData")
@@ -38,8 +40,12 @@ local GetVillagerData = RemoteEvents:WaitForChild("GetVillagerData")
 local GetMerchantStock = RemoteEvents:WaitForChild("GetMerchantStock")
 local GetPrices = RemoteEvents:WaitForChild("GetPrices")
 local GetInventoryDisplay = RemoteEvents:WaitForChild("GetInventoryDisplay")
+local GetLobbyState = RemoteEvents:WaitForChild("GetLobbyState")
 
 -- === CLIENT STATE ===
+local GameState = "Lobby"  -- "Lobby" or "Playing"
+local LobbyCountdown = 15
+local LobbyPlayerCount = 0
 local PlayerMoney = 100
 local PlayerInventory = { valid = {}, expired = {} }
 local CurrentDay = 1
@@ -59,6 +65,7 @@ local InteractPanelOpen = false
 local VILLAGER_INTERACT_DISTANCE = 12
 local MERCHANT_INTERACT_DISTANCE = 15
 local TENT_INTERACT_DISTANCE = 15
+local MERCHANT_SIGN_DISTANCE = 25
 
 -- === UI SETUP ===
 local GameUI = PlayerGui:FindFirstChild("GameUI")
@@ -196,6 +203,105 @@ local TimeRemainingLabel = CreateLabel({
 	Parent = TopBar,
 })
 
+-- === LOBBY UI ===
+local LobbyUI = CreateFrame({
+	Name = "LobbyUI",
+	Size = UDim2.new(1, 0, 1, 0),
+	Position = UDim2.new(0, 0, 0, 0),
+	BackgroundTransparency = 0.3,
+	BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+	Visible = true,
+})
+
+local LobbyPanel = CreateFrame({
+	Name = "LobbyPanel",
+	Size = UDim2.new(0, 500, 0, 400),
+	Position = UDim2.new(0.5, 0, 0.5, 0),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Corner = 20,
+	BackgroundColor3 = Color3.fromRGB(40, 40, 60),
+	Parent = LobbyUI,
+})
+
+local LobbyTitle = CreateLabel({
+	Name = "LobbyTitle",
+	Size = UDim2.new(1, 0, 0, 60),
+	Position = UDim2.new(0, 0, 0, 20),
+	Text = "DRUGSTORE",
+	TextColor3 = Color3.fromRGB(255, 180, 50),
+	TextSize = 48,
+	Font = Enum.Font.GothamBlack,
+	Parent = LobbyPanel,
+})
+
+local LobbySubtitle = CreateLabel({
+	Name = "LobbySubtitle",
+	Size = UDim2.new(1, 0, 0, 30),
+	Position = UDim2.new(0, 0, 0, 75),
+	Text = "ECONOMY GAME",
+	TextColor3 = Color3.fromRGB(255, 220, 150),
+	TextSize = 24,
+	Font = Enum.Font.GothamBold,
+	Parent = LobbyPanel,
+})
+
+local LobbyInstructions = CreateLabel({
+	Name = "LobbyInstructions",
+	Size = UDim2.new(0.9, 0, 0, 80),
+	Position = UDim2.new(0.05, 0, 0, 130),
+	Text = "Buy medicine from the merchant.\nCure sick villagers before they die.\nSurvive as many days as you can!",
+	TextColor3 = Color3.fromRGB(200, 200, 200),
+	TextSize = 16,
+	Font = Enum.Font.Gotham,
+	TextWrapped = true,
+	Parent = LobbyPanel,
+})
+
+local LobbyPlayerCountLabel = CreateLabel({
+	Name = "LobbyPlayerCount",
+	Size = UDim2.new(1, 0, 0, 30),
+	Position = UDim2.new(0, 0, 0, 230),
+	Text = "Players: 0",
+	TextColor3 = Color3.fromRGB(150, 200, 255),
+	TextSize = 20,
+	Parent = LobbyPanel,
+})
+
+local LobbyCountdownLabel = CreateLabel({
+	Name = "LobbyCountdownLabel",
+	Size = UDim2.new(1, 0, 0, 50),
+	Position = UDim2.new(0, 0, 0, 270),
+	Text = "Waiting for players...",
+	TextColor3 = Color3.fromRGB(255, 255, 100),
+	TextSize = 28,
+	Font = Enum.Font.GothamBlack,
+	Parent = LobbyPanel,
+})
+
+local LobbyTip = CreateLabel({
+	Name = "LobbyTip",
+	Size = UDim2.new(0.9, 0, 0, 40),
+	Position = UDim2.new(0.05, 0, 0, 340),
+	Text = "Press E near NPCs to interact",
+	TextColor3 = Color3.fromRGB(150, 150, 150),
+	TextSize = 14,
+	Font = Enum.Font.Gotham,
+	Parent = LobbyPanel,
+})
+
+local function UpdateLobbyUI()
+	LobbyPlayerCountLabel.Text = "Players: " .. LobbyPlayerCount
+	if GameState == "Lobby" then
+		if LobbyPlayerCount >= 1 then
+			LobbyCountdownLabel.Text = "Starting in " .. LobbyCountdown .. "..."
+			LobbyCountdownLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+		else
+			LobbyCountdownLabel.Text = "Waiting for players..."
+			LobbyCountdownLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
+		end
+	end
+end
+
 -- === INTERACTION PROMPT ===
 local InteractPrompt = CreateFrame({
 	Name = "InteractPrompt",
@@ -241,10 +347,155 @@ local InventoryListLayout = Instance.new("UIListLayout")
 InventoryListLayout.Padding = UDim.new(0, 3)
 InventoryListLayout.Parent = InventoryScroll
 
+-- === SICKNESS-SPECIFIC DIALOGUE TEMPLATES ===
+local SicknessCategories = {
+	head = {"Headache", "Migraine", "Fever"},
+	stomach = {"Stomach Ache", "Diarrhea", "Hyperacidity", "Loose Bowels"},
+	respiratory = {"Runny Nose", "Wet Cough", "Dry Cough", "Asthma", "Phlegm", "Sore Throat", "Itchy Throat"},
+	pain = {"Body Pain", "Back Pain", "Joint Pain", "Menstrual Cramps", "Toothache"},
+	skin = {"Allergy", "Rashes", "Hay Fever", "Itchy Skin"},
+	general = {"Flu"},
+}
+
+local function GetSicknessCategory(sickness)
+	for category, sicknesses in pairs(SicknessCategories) do
+		for _, s in ipairs(sicknesses) do
+			if s == sickness then return category end
+		end
+	end
+	return "general"
+end
+
+local SicknessDialogues = {
+	head = {
+		normal = {
+			"My head is pounding... I need {medicine}...",
+			"Everything is spinning... please, {medicine}...",
+			"This {sickness} is making me see stars...",
+			"I can't think straight... the pain in my head...",
+			"Please... my head feels like it's going to explode...",
+		},
+		lowHP = {
+			"The throbbing won't stop... I'm fading...",
+			"My head... I can barely see anymore...",
+			"*holding head* Please... hurry...",
+		},
+	},
+	stomach = {
+		normal = {
+			"My stomach is killing me... I need {medicine}...",
+			"I haven't been able to eat... this {sickness}...",
+			"*clutches stomach* Please, find {medicine}...",
+			"The cramps are unbearable... help me...",
+			"I've been sick all day... need {medicine}...",
+		},
+		lowHP = {
+			"I'm so weak from the {sickness}... can't go on...",
+			"*groaning* My stomach... please... hurry...",
+			"I haven't eaten in days... the {sickness}...",
+		},
+	},
+	respiratory = {
+		normal = {
+			"*cough* *cough* I can barely breathe...",
+			"This {sickness}... *wheeze* ...need {medicine}...",
+			"My throat is on fire... please, {medicine}...",
+			"*coughing fit* I need help...",
+			"I can't stop coughing... this {sickness} is awful...",
+		},
+		lowHP = {
+			"*gasping* Can't... breathe... help...",
+			"*weak cough* Please... {medicine}... quick...",
+			"The {sickness}... *wheeze* ...I'm suffocating...",
+		},
+	},
+	pain = {
+		normal = {
+			"The pain is unbearable... I need {medicine}...",
+			"Every movement hurts... this {sickness}...",
+			"I can barely move... the {sickness} is too much...",
+			"*wincing* Please, find {medicine} soon...",
+			"My body aches everywhere... need relief...",
+		},
+		lowHP = {
+			"The pain... I can't take it anymore...",
+			"*crying* Please... make it stop...",
+			"I'm too weak to even scream... help me...",
+		},
+	},
+	skin = {
+		normal = {
+			"This itching won't stop... I need {medicine}...",
+			"My skin is on fire... please, {medicine}...",
+			"I've been scratching all day... this {sickness}...",
+			"The rash is spreading... help me...",
+			"*scratching* I can't take this anymore...",
+		},
+		lowHP = {
+			"The itching is driving me insane...",
+			"I've scratched until I bled... please... help...",
+			"*weakly scratching* Can't... stop...",
+		},
+	},
+	general = {
+		normal = {
+			"I feel terrible all over... I need {medicine}...",
+			"This {sickness} has taken everything from me...",
+			"Please... I've been suffering for so long...",
+			"I just want to feel normal again... {medicine}...",
+			"My family needs me... but I'm so sick...",
+		},
+		lowHP = {
+			"I... I can see the light... Is this the end?",
+			"Tell my family... I tried...",
+			"*weakly* Please... {medicine}... hurry...",
+		},
+	},
+}
+
+local HealthyDialogues = {
+	"Thank you so much! I feel so much better now!",
+	"You saved my life! I won't forget this kindness!",
+	"Finally, I can breathe again! Bless you!",
+	"I thought I was going to die... Thank you!",
+	"My family will be so happy! Thank you, healer!",
+}
+
+local DeadDialogues = {
+	"May they rest in peace...",
+	"Gone too soon... if only we had the medicine...",
+	"Another soul lost to this plague...",
+}
+
+local function GetEmotionalDialogue(villagerData)
+	local sickness = villagerData.Sickness or "illness"
+	local medicine = villagerData.NeededMedicine or "medicine"
+
+	local templates
+	if not villagerData.IsAlive then
+		templates = DeadDialogues
+	elseif not villagerData.Sickness then
+		templates = HealthyDialogues
+	else
+		local category = GetSicknessCategory(sickness)
+		local categoryDialogues = SicknessDialogues[category] or SicknessDialogues.general
+
+		if villagerData.HP and villagerData.MaxHP and (villagerData.HP / villagerData.MaxHP) < 0.33 then
+			templates = categoryDialogues.lowHP
+		else
+			templates = categoryDialogues.normal
+		end
+	end
+
+	local template = templates[math.random(1, #templates)]
+	local dialogue = template:gsub("{sickness}", sickness):gsub("{medicine}", medicine)
+	return dialogue
+end
+
 -- === VILLAGER INTERACTION PANEL ===
 local VillagerPanel = CreateFrame({
 	Name = "VillagerPanel",
-	Size = UDim2.new(0, 380, 0, 220),
+	Size = UDim2.new(0, 400, 0, 280),
 	Position = UDim2.new(0.5, 0, 0.5, 0),
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	Corner = 12,
@@ -262,34 +513,48 @@ local VillagerTitle = CreateLabel({
 })
 Instance.new("UICorner", VillagerTitle).CornerRadius = UDim.new(0, 12)
 
+-- Dialogue text (emotional)
+local VillagerDialogue = CreateLabel({
+	Name = "Dialogue",
+	Size = UDim2.new(1, -30, 0, 50),
+	Position = UDim2.new(0, 15, 0, 45),
+	Text = "",
+	TextSize = 14,
+	TextColor3 = Color3.fromRGB(255, 255, 200),
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextWrapped = true,
+	Font = Enum.Font.GothamMedium,
+	Parent = VillagerPanel,
+})
+
 local VillagerStatus = CreateLabel({
 	Name = "Status",
-	Size = UDim2.new(1, -20, 0, 25),
-	Position = UDim2.new(0, 10, 0, 50),
+	Size = UDim2.new(1, -20, 0, 22),
+	Position = UDim2.new(0, 10, 0, 100),
 	Text = "Status: Healthy",
-	TextSize = 16,
+	TextSize = 14,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Parent = VillagerPanel,
 })
 
 local VillagerSickness = CreateLabel({
 	Name = "Sickness",
-	Size = UDim2.new(1, -20, 0, 25),
-	Position = UDim2.new(0, 10, 0, 75),
+	Size = UDim2.new(0.5, -10, 0, 22),
+	Position = UDim2.new(0, 10, 0, 122),
 	Text = "",
 	TextColor3 = Color3.fromRGB(255, 100, 100),
-	TextSize = 16,
+	TextSize = 13,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Parent = VillagerPanel,
 })
 
 local VillagerNeeds = CreateLabel({
 	Name = "Needs",
-	Size = UDim2.new(1, -20, 0, 25),
-	Position = UDim2.new(0, 10, 0, 100),
+	Size = UDim2.new(0.5, -10, 0, 22),
+	Position = UDim2.new(0.5, 0, 0, 122),
 	Text = "",
 	TextColor3 = Color3.fromRGB(100, 200, 255),
-	TextSize = 16,
+	TextSize = 13,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Parent = VillagerPanel,
 })
@@ -297,8 +562,8 @@ local VillagerNeeds = CreateLabel({
 -- HP Bar
 local VillagerHPBg = CreateFrame({
 	Name = "HPBg",
-	Size = UDim2.new(0.9, 0, 0, 20),
-	Position = UDim2.new(0.05, 0, 0, 130),
+	Size = UDim2.new(0.9, 0, 0, 22),
+	Position = UDim2.new(0.05, 0, 0, 150),
 	BackgroundColor3 = Color3.fromRGB(60, 20, 20),
 	Corner = 5,
 	Parent = VillagerPanel,
@@ -320,26 +585,33 @@ local VillagerHPText = CreateLabel({
 	Parent = VillagerHPBg,
 })
 
+-- Button container at bottom
+local VillagerButtonContainer = CreateFrame({
+	Name = "ButtonContainer",
+	Size = UDim2.new(1, -20, 0, 50),
+	Position = UDim2.new(0, 10, 1, -60),
+	BackgroundTransparency = 1,
+	Parent = VillagerPanel,
+})
+
 local VillagerCureBtn = CreateButton({
 	Name = "CureButton",
-	Size = UDim2.new(0, 140, 0, 45),
-	Position = UDim2.new(0.25, 0, 1, -55),
-	AnchorPoint = Vector2.new(0.5, 0),
+	Size = UDim2.new(0.48, 0, 0, 45),
+	Position = UDim2.new(0, 0, 0, 0),
 	BackgroundColor3 = Color3.fromRGB(0, 150, 50),
 	Text = "CURE",
 	TextSize = 16,
-	Parent = VillagerPanel,
+	Parent = VillagerButtonContainer,
 })
 
 local VillagerCloseBtn = CreateButton({
 	Name = "CloseButton",
-	Size = UDim2.new(0, 100, 0, 45),
-	Position = UDim2.new(0.75, 0, 1, -55),
-	AnchorPoint = Vector2.new(0.5, 0),
+	Size = UDim2.new(0.48, 0, 0, 45),
+	Position = UDim2.new(0.52, 0, 0, 0),
 	BackgroundColor3 = Color3.fromRGB(120, 50, 50),
 	Text = "CLOSE",
 	TextSize = 16,
-	Parent = VillagerPanel,
+	Parent = VillagerButtonContainer,
 })
 
 -- === MERCHANT PANEL ===
@@ -700,8 +972,11 @@ local function UpdateVillagerPanel(villagerIndex)
 
 	VillagerTitle.Text = data.DisplayName or ("Villager " .. villagerIndex)
 
+	-- Get emotional dialogue
+	VillagerDialogue.Text = '"' .. GetEmotionalDialogue(data) .. '"'
+
 	if not data.IsAlive then
-		VillagerStatus.Text = "Status: DECEASED"
+		VillagerStatus.Text = "DECEASED"
 		VillagerStatus.TextColor3 = Color3.fromRGB(100, 100, 100)
 		VillagerSickness.Text = ""
 		VillagerNeeds.Text = ""
@@ -709,10 +984,11 @@ local function UpdateVillagerPanel(villagerIndex)
 		VillagerHPFill.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
 		VillagerHPText.Text = "DEAD"
 		VillagerCureBtn.Visible = false
+		VillagerDialogue.TextColor3 = Color3.fromRGB(150, 150, 150)
 	elseif data.Sickness then
-		VillagerStatus.Text = "Status: SICK"
+		VillagerStatus.Text = "SICK"
 		VillagerStatus.TextColor3 = Color3.fromRGB(255, 150, 150)
-		VillagerSickness.Text = "Sickness: " .. data.Sickness
+		VillagerSickness.Text = data.Sickness
 		VillagerSickness.TextColor3 = Color3.fromRGB(255, 100, 100)
 		VillagerNeeds.Text = "Needs: " .. (data.NeededMedicine or "Unknown")
 		VillagerNeeds.TextColor3 = Color3.fromRGB(100, 200, 255)
@@ -722,13 +998,16 @@ local function UpdateVillagerPanel(villagerIndex)
 		VillagerHPFill.Size = UDim2.new(hpPercent, 0, 1, 0)
 		VillagerHPText.Text = math.floor(data.HP) .. " / " .. data.MaxHP .. " HP"
 
-		-- HP color
+		-- HP color and dialogue color based on health
 		if hpPercent > 0.66 then
 			VillagerHPFill.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+			VillagerDialogue.TextColor3 = Color3.fromRGB(255, 255, 200)
 		elseif hpPercent > 0.33 then
 			VillagerHPFill.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
+			VillagerDialogue.TextColor3 = Color3.fromRGB(255, 220, 150)
 		else
 			VillagerHPFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+			VillagerDialogue.TextColor3 = Color3.fromRGB(255, 150, 150)
 		end
 
 		-- Cure button
@@ -737,7 +1016,7 @@ local function UpdateVillagerPanel(villagerIndex)
 		VillagerCureBtn.BackgroundColor3 = hasNeeded and Color3.fromRGB(0, 150, 50) or Color3.fromRGB(80, 80, 80)
 		VillagerCureBtn.Text = hasNeeded and "CURE" or "NO MEDICINE"
 	else
-		VillagerStatus.Text = "Status: HEALTHY"
+		VillagerStatus.Text = "HEALTHY"
 		VillagerStatus.TextColor3 = Color3.fromRGB(100, 255, 100)
 		VillagerSickness.Text = ""
 		VillagerNeeds.Text = ""
@@ -745,6 +1024,7 @@ local function UpdateVillagerPanel(villagerIndex)
 		VillagerHPFill.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
 		VillagerHPText.Text = data.MaxHP .. " / " .. data.MaxHP .. " HP"
 		VillagerCureBtn.Visible = false
+		VillagerDialogue.TextColor3 = Color3.fromRGB(150, 255, 150)
 	end
 
 	VillagerPanel.Visible = true
@@ -938,6 +1218,19 @@ Notification.OnClientEvent:Connect(function(data)
 	ShowNotification(data.text, data.color)
 end)
 
+UpdateLobby.OnClientEvent:Connect(function(data)
+	GameState = data.state
+	LobbyPlayerCount = data.playerCount
+	LobbyCountdown = data.countdown
+	UpdateLobbyUI()
+end)
+
+StartGameEvent.OnClientEvent:Connect(function()
+	GameState = "Playing"
+	LobbyUI.Visible = false
+	TopBar.Visible = true
+end)
+
 -- === PROXIMITY DETECTION ===
 local function GetCharacterPosition()
 	local character = Player.Character
@@ -997,6 +1290,35 @@ local function IsNearTent()
 		end
 	end
 	return false
+end
+
+local function UpdateMerchantSignVisibility()
+	local merchant = workspace:FindFirstChild("Merchant")
+	if not merchant then return end
+
+	local sign = merchant:FindFirstChild("MerchantSign")
+	if not sign then return end
+
+	local character = Player.Character
+	if not character then
+		sign.Enabled = false
+		return
+	end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		sign.Enabled = false
+		return
+	end
+
+	local merchantPart = merchant:FindFirstChild("HumanoidRootPart") or merchant.PrimaryPart
+	if not merchantPart then
+		sign.Enabled = false
+		return
+	end
+
+	local distance = (merchantPart.Position - hrp.Position).Magnitude
+	sign.Enabled = distance <= MERCHANT_SIGN_DISTANCE
 end
 
 local function UpdateInteractPrompt()
@@ -1065,7 +1387,25 @@ end)
 
 -- === INITIALIZATION ===
 local function Initialize()
-	-- Get initial data from server
+	-- Get initial lobby state
+	local lobbyState = GetLobbyState:InvokeServer()
+	if lobbyState then
+		GameState = lobbyState.state or "Lobby"
+		LobbyPlayerCount = lobbyState.playerCount or 0
+		LobbyCountdown = lobbyState.countdown or 15
+	end
+
+	-- Set initial UI visibility based on game state
+	if GameState == "Lobby" then
+		LobbyUI.Visible = true
+		TopBar.Visible = false
+		UpdateLobbyUI()
+	else
+		LobbyUI.Visible = false
+		TopBar.Visible = true
+	end
+
+	-- Get initial game data from server
 	local playerData = GetPlayerData:InvokeServer()
 	if playerData then
 		PlayerMoney = playerData.Money or 100
@@ -1085,6 +1425,7 @@ local function Initialize()
 	-- Start proximity check loop
 	RunService.Heartbeat:Connect(function()
 		UpdateInteractPrompt()
+		UpdateMerchantSignVisibility()
 	end)
 end
 

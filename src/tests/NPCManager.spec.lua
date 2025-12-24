@@ -370,8 +370,9 @@ return function(TestFramework)
 			NPCManager:_reset()
 			NPCManager:Initialize()
 
-			-- Drain to just above warning threshold
-			NPCManager:SimulateDrain(1200) -- 120 HP drain, leaves 60 HP (33.3%)
+			-- Drain to below warning threshold (33% of 180 = 59.4)
+			-- Need HP <= 59.4, so drain 121+ HP (1210+ seconds)
+			NPCManager:SimulateDrain(1210) -- 121 HP drain, leaves 59 HP (below 33%)
 
 			local villager = NPCManager:GetVillager(1)
 			expect(villager.LowHPWarned).toBeTruthy()
@@ -479,6 +480,10 @@ return function(TestFramework)
 		end)
 
 		it("should return false with even 1 villager alive", function()
+			NPCManager:_reset()
+			NPCManager:Initialize()
+
+			-- Kill only villagers 1-7, leave villager 8 alive
 			for i = 1, 7 do
 				NPCManager:_setVillagerHP(i, 0)
 			end

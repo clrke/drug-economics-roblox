@@ -8,10 +8,7 @@
     },
     "ServerScriptService": {
       "$className": "ServerScriptService",
-      "Modules": {
-        "$className": "Folder",
-        "$path": "src/server"
-      },
+      "$path": "src/server",
       "Tests": {
         "$className": "Folder",
         "$path": "src/tests"

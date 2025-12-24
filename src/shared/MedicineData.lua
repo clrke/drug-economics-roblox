@@ -40,6 +40,11 @@ MedicineData.Medicines = {
 	{id = 24, name = "Migraine Tablets", cures = "Migraine"},
 }
 
+-- Assign random basePrice ($4-$16) to each medicine
+for _, medicine in ipairs(MedicineData.Medicines) do
+	medicine.basePrice = math.random(4, 16)
+end
+
 -- Create lookup tables for easy access
 MedicineData.ByID = {}
 MedicineData.ByName = {}

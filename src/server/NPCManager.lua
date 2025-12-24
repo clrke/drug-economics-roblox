@@ -4,19 +4,61 @@
 local NPCManager = {}
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local GameConfig = require(ReplicatedStorage:WaitForChild("GameConfig"))
 local MedicineData = require(ReplicatedStorage:WaitForChild("MedicineData"))
 
 -- Store all villager data
 local Villagers = {}
 
--- Game start time for survival tracking
-local GameStartTime = 0
+-- Game time tracking (for HP calculation)
 local CurrentDay = 1
+local CurrentPhaseIsDay = true
+local CurrentPhaseElapsed = 0  -- seconds into current phase
 
--- HP drain connection
-local DrainConnection = nil
+-- House data for positioning (from exploration)
+local HouseData = {
+	{center = Vector3.new(-157, 4, 73), rotation = -60},
+	{center = Vector3.new(155, 4, 48), rotation = 75},
+	{center = Vector3.new(-60, 4, 148), rotation = -15},
+	{center = Vector3.new(57, 4, 141), rotation = 30},
+	{center = Vector3.new(-152, 4, -66), rotation = -105},
+	{center = Vector3.new(48, 4, -144), rotation = 165},
+	{center = Vector3.new(-74, 4, -157), rotation = -150},
+	{center = Vector3.new(150, 4, -75), rotation = 120},
+}
+
+-- Face textures
+local FACE_HAPPY = "rbxasset://textures/face.png"
+local FACE_SAD = "rbxassetid://147144198" -- Built-in sad face
+
+-- Calculate total game time in seconds
+local function GetGameTime()
+	local dayDuration = GameConfig.Time.DayDuration + GameConfig.Time.NightDuration
+	local dayTime = (CurrentDay - 1) * dayDuration
+
+	-- Add current phase progress
+	if CurrentPhaseIsDay then
+		dayTime = dayTime + CurrentPhaseElapsed
+	else
+		dayTime = dayTime + GameConfig.Time.DayDuration + CurrentPhaseElapsed
+	end
+
+	return dayTime
+end
+
+-- Calculate villager HP based on game time (not real-time)
+local function CalculateVillagerHP(villager)
+	if not villager.IsAlive then return 0 end
+	if not villager.Sickness then return GameConfig.Villager.MaxHP end
+	if not villager.SickSinceGameTime then return GameConfig.Villager.MaxHP end
+
+	local currentGameTime = GetGameTime()
+	local sickDuration = currentGameTime - villager.SickSinceGameTime
+	local hpLost = sickDuration * GameConfig.Villager.HPDrainPerSecond
+	local currentHP = GameConfig.Villager.MaxHP - hpLost
+
+	return math.max(0, currentHP)
+end
 
 -- Create health bar billboard above villager
 local function CreateHealthBar(villagerModel)
@@ -106,6 +148,9 @@ local function UpdateHealthBar(villager)
 	local healthFill = healthBg and healthBg:FindFirstChild("HealthFill")
 	local nameLabel = bgFrame:FindFirstChild("NameLabel")
 
+	-- Calculate current HP from game time
+	local currentHP = CalculateVillagerHP(villager)
+
 	if not villager.IsAlive then
 		-- Dead
 		if nameLabel then
@@ -118,7 +163,7 @@ local function UpdateHealthBar(villager)
 		end
 	else
 		-- Alive
-		local hpPercent = villager.HP / GameConfig.Villager.MaxHP
+		local hpPercent = currentHP / GameConfig.Villager.MaxHP
 
 		if nameLabel then
 			if villager.Sickness then
@@ -131,7 +176,7 @@ local function UpdateHealthBar(villager)
 		end
 
 		if healthFill then
-			healthFill.Size = UDim2.new(hpPercent, 0, 1, 0)
+			healthFill.Size = UDim2.new(math.max(0, hpPercent), 0, 1, 0)
 
 			-- Color based on HP
 			if hpPercent > 0.66 then
@@ -145,54 +190,184 @@ local function UpdateHealthBar(villager)
 	end
 end
 
--- Set villager pose (lying on bed when sick, standing when healthy)
+-- Update villager face texture based on health
+local function UpdateVillagerFace(villager)
+	if not villager.Model then return end
+
+	local head = villager.Model:FindFirstChild("Head")
+	if not head then return end
+
+	local face = head:FindFirstChild("face")
+	if not face then return end
+
+	-- Set face texture based on health
+	if not villager.IsAlive then
+		face.Texture = FACE_SAD
+	elseif villager.Sickness then
+		face.Texture = FACE_SAD
+	else
+		face.Texture = FACE_HAPPY
+	end
+
+	-- Fix face orientation: when lying down, face should point UP (Top), when standing point FORWARD (Front)
+	local isLying = not villager.IsAlive or villager.Sickness
+	if isLying then
+		face.Face = Enum.NormalId.Top
+	else
+		face.Face = Enum.NormalId.Front
+	end
+end
+
+-- R15 Body part offsets for standing pose (relative to HumanoidRootPart position)
+local StandingOffsets = {
+	Head = Vector3.new(0, 2.1, 0),
+	UpperTorso = Vector3.new(0, 0.9, 0),
+	LowerTorso = Vector3.new(0, 0.1, 0),
+	Torso = Vector3.new(0, 0.5, 0),  -- Legacy invisible part
+	["Left Arm"] = Vector3.new(-1.1, 0.8, 0),
+	["Right Arm"] = Vector3.new(1.1, 0.8, 0),
+	LeftLowerArm = Vector3.new(-1.1, 0, 0),
+	RightLowerArm = Vector3.new(1.1, 0, 0),
+	LeftHand = Vector3.new(-1.1, -0.5, 0),
+	RightHand = Vector3.new(1.1, -0.5, 0),
+	["Left Leg"] = Vector3.new(-0.5, -0.6, 0),
+	["Right Leg"] = Vector3.new(0.5, -0.6, 0),
+	LeftLowerLeg = Vector3.new(-0.5, -1.4, 0),
+	RightLowerLeg = Vector3.new(0.5, -1.4, 0),
+	LeftFoot = Vector3.new(-0.5, -1.95, 0.1),
+	RightFoot = Vector3.new(0.5, -1.95, 0.1),
+}
+
+-- R15 Body part offsets for lying pose (on back, on bed)
+local LyingOffsets = {
+	Head = Vector3.new(2.1, 0.8, 0),
+	UpperTorso = Vector3.new(0.3, 0.8, 0),
+	LowerTorso = Vector3.new(-0.5, 0.8, 0),
+	Torso = Vector3.new(0, 0.8, 0),  -- Legacy invisible part
+	["Left Arm"] = Vector3.new(0.3, 0.8, 1.1),
+	["Right Arm"] = Vector3.new(0.3, 0.8, -1.1),
+	LeftLowerArm = Vector3.new(-0.5, 0.8, 1.1),
+	RightLowerArm = Vector3.new(-0.5, 0.8, -1.1),
+	LeftHand = Vector3.new(-1, 0.8, 1.1),
+	RightHand = Vector3.new(-1, 0.8, -1.1),
+	["Left Leg"] = Vector3.new(-1.2, 0.8, 0.5),
+	["Right Leg"] = Vector3.new(-1.2, 0.8, -0.5),
+	LeftLowerLeg = Vector3.new(-2, 0.8, 0.5),
+	RightLowerLeg = Vector3.new(-2, 0.8, -0.5),
+	LeftFoot = Vector3.new(-2.5, 0.8, 0.5),
+	RightFoot = Vector3.new(-2.5, 0.8, -0.5),
+}
+
+-- Move all body parts to create a pose
 local function SetVillagerPose(villager)
 	if not villager.Model then return end
 
-	local hrp = villager.Model:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
+	local houseIndex = villager.Index
+	local houseInfo = HouseData[houseIndex]
+	if not houseInfo then return end
 
-	if not villager.IsAlive then
-		-- Dead: lying flat
-		if villager.BedPosition then
-			hrp.CFrame = CFrame.new(villager.BedPosition) * CFrame.Angles(0, 0, math.rad(90))
-		end
-	elseif villager.Sickness then
-		-- Sick: lying on bed
-		if villager.BedPosition then
-			hrp.CFrame = CFrame.new(villager.BedPosition + Vector3.new(0, 1, 0)) * CFrame.Angles(0, 0, math.rad(90))
-		end
+	-- Get size scale from NPC attributes (for R15 variations)
+	local sizeScale = villager.Model:GetAttribute("SizeScale") or 1
+
+	local houseRotation = math.rad(houseInfo.rotation)
+	local bedPosition = houseInfo.center + Vector3.new(0, 1, 0) -- Bed is at floor level + 1
+
+	-- Calculate standing position outside house (15 studs in front direction)
+	local frontOffset = CFrame.Angles(0, houseRotation, 0) * CFrame.new(0, 0, -15)
+	local standPosition = houseInfo.center + frontOffset.Position
+
+	local isLying = not villager.IsAlive or villager.Sickness
+	local basePosition = isLying and bedPosition or standPosition
+	local offsets = isLying and LyingOffsets or StandingOffsets
+
+	-- Calculate rotation for the pose
+	local poseRotation
+	if isLying then
+		-- Lying: rotated to be on back on bed, aligned with house
+		poseRotation = CFrame.Angles(math.rad(-90), houseRotation, 0)
 	else
-		-- Healthy: standing
-		if villager.StandPosition then
-			hrp.CFrame = CFrame.new(villager.StandPosition)
+		-- Standing: facing away from house
+		poseRotation = CFrame.Angles(0, houseRotation, 0)
+	end
+
+	-- Move HumanoidRootPart
+	local hrp = villager.Model:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		hrp.CFrame = CFrame.new(basePosition) * poseRotation
+	end
+
+	-- Move all body parts with proper offsets
+	for partName, offset in pairs(offsets) do
+		local part = villager.Model:FindFirstChild(partName)
+		if part then
+			-- Scale offset by size
+			local scaledOffset = offset * sizeScale
+
+			-- Transform offset by house rotation
+			if isLying then
+				local worldOffset = CFrame.Angles(0, houseRotation, 0) * CFrame.new(scaledOffset)
+				part.CFrame = CFrame.new(basePosition + worldOffset.Position) * poseRotation
+			else
+				part.CFrame = CFrame.new(basePosition + scaledOffset) * CFrame.Angles(0, houseRotation, 0)
+			end
 		end
 	end
+
+	-- Move hair and accessories with head
+	local head = villager.Model:FindFirstChild("Head")
+	if head then
+		local hairFolder = villager.Model:FindFirstChild("Hair")
+		if hairFolder then
+			for _, hairPart in ipairs(hairFolder:GetChildren()) do
+				if hairPart:IsA("BasePart") then
+					-- Hair stays on top of head
+					local hairOffset = hairPart.Position - head.Position
+					if isLying then
+						-- Recalculate position relative to lying head
+						local headPos = head.Position
+						hairPart.CFrame = CFrame.new(headPos + hairOffset) * poseRotation
+					end
+				end
+			end
+		end
+
+		local hatFolder = villager.Model:FindFirstChild("HatAccessory")
+		if hatFolder then
+			for _, hatPart in ipairs(hatFolder:GetChildren()) do
+				if hatPart:IsA("BasePart") then
+					local hatOffset = hatPart.Position - head.Position
+					if isLying then
+						local headPos = head.Position
+						hatPart.CFrame = CFrame.new(headPos + hatOffset) * poseRotation
+					end
+				end
+			end
+		end
+	end
+
+	-- Update face
+	UpdateVillagerFace(villager)
 end
 
 -- Create villager data
 local function CreateVillagerData(index, model)
-	local hrp = model:FindFirstChild("HumanoidRootPart")
-	local bedPosition = hrp and hrp.Position or Vector3.new(0, 0, 0)
-
 	return {
 		Index = index,
 		Model = model,
 		DisplayName = model:GetAttribute("DisplayName") or ("Villager " .. index),
 		Sickness = nil,
 		NeededMedicine = nil,
-		HP = GameConfig.Villager.MaxHP,
+		SickSinceGameTime = nil,  -- Game time when became sick (for HP calculation)
 		IsAlive = true,
-		BedPosition = bedPosition,
-		StandPosition = bedPosition + Vector3.new(3, 0, 0), -- Stand beside bed
 		LowHPWarned = false,
 	}
 end
 
 function NPCManager:Initialize()
 	Villagers = {}
-	GameStartTime = os.time()
 	CurrentDay = 1
+	CurrentPhaseIsDay = true
+	CurrentPhaseElapsed = 0
 
 	-- Wait for WorldSetup to create villagers
 	task.wait(1)
@@ -207,57 +382,59 @@ function NPCManager:Initialize()
 			local sickness = MedicineData:GetRandomSickness()
 			Villagers[i].Sickness = sickness
 			Villagers[i].NeededMedicine = MedicineData:GetMedicineForSickness(sickness)
+			Villagers[i].SickSinceGameTime = GetGameTime()
 
-			UpdateHealthBar(Villagers[i])
 			SetVillagerPose(Villagers[i])
+			UpdateHealthBar(Villagers[i])
 		else
 			warn("Villager model not found: " .. villagerName)
 		end
 	end
 
-	-- Start HP drain loop
-	self:StartHPDrain()
-
 	return Villagers
 end
 
--- Start continuous HP drain for sick villagers
-function NPCManager:StartHPDrain()
-	if DrainConnection then
-		DrainConnection:Disconnect()
-	end
+-- Update game time from GameManager (called every second)
+function NPCManager:UpdateGameTime(day, isDay, phaseElapsed)
+	CurrentDay = day
+	CurrentPhaseIsDay = isDay
+	CurrentPhaseElapsed = phaseElapsed
 
-	DrainConnection = RunService.Heartbeat:Connect(function(dt)
-		for _, villager in pairs(Villagers) do
-			if villager.IsAlive and villager.Sickness then
-				-- Drain HP
-				villager.HP = villager.HP - (GameConfig.Villager.HPDrainPerSecond * dt)
-
-				-- Check for death
-				if villager.HP <= 0 then
-					villager.HP = 0
-					villager.IsAlive = false
-					SetVillagerPose(villager)
-				end
-
-				-- Check for low HP warning
-				local warningThreshold = GameConfig.Villager.MaxHP * GameConfig.Villager.LowHPWarningPercent
-				if villager.HP <= warningThreshold and not villager.LowHPWarned then
-					villager.LowHPWarned = true
-					-- Warning event can be fired here
-				end
-
-				UpdateHealthBar(villager)
-			end
-		end
-	end)
+	-- Check for deaths and update health bars
+	self:CheckForDeaths()
+	self:UpdateAllHealthBars()
 end
 
-function NPCManager:StopHPDrain()
-	if DrainConnection then
-		DrainConnection:Disconnect()
-		DrainConnection = nil
+-- Check if any villagers have died from HP drain
+function NPCManager:CheckForDeaths()
+	for _, villager in pairs(Villagers) do
+		if villager.IsAlive and villager.Sickness then
+			local hp = CalculateVillagerHP(villager)
+
+			if hp <= 0 then
+				villager.IsAlive = false
+				SetVillagerPose(villager)
+			end
+
+			-- Check for low HP warning
+			local warningThreshold = GameConfig.Villager.MaxHP * GameConfig.Villager.LowHPWarningPercent
+			if hp <= warningThreshold and not villager.LowHPWarned then
+				villager.LowHPWarned = true
+			end
+		end
 	end
+end
+
+-- Get villager's current HP (calculated from game time)
+function NPCManager:GetVillagerHP(villagerIndex)
+	local villager = Villagers[villagerIndex]
+	if not villager then return 0 end
+	return CalculateVillagerHP(villager)
+end
+
+-- Legacy function for compatibility - no longer needed with game-time HP
+function NPCManager:StopHPDrain()
+	-- No-op: HP is now calculated from game time, not drained in real-time
 end
 
 function NPCManager:GetVillager(index)
@@ -298,7 +475,7 @@ function NPCManager:TryCure(villagerIndex, medicineId)
 	-- Cure the villager
 	villager.Sickness = nil
 	villager.NeededMedicine = nil
-	villager.HP = GameConfig.Villager.MaxHP -- Full restore
+	villager.SickSinceGameTime = nil  -- Clear sick time (HP becomes full)
 	villager.LowHPWarned = false
 
 	UpdateHealthBar(villager)
@@ -310,6 +487,9 @@ end
 -- Process new day: give new sicknesses to healthy villagers
 function NPCManager:ProcessNewDay()
 	CurrentDay = CurrentDay + 1
+	CurrentPhaseIsDay = true
+	CurrentPhaseElapsed = 0
+
 	local deaths = {}
 	local newSicknesses = {}
 
@@ -319,6 +499,7 @@ function NPCManager:ProcessNewDay()
 			local sickness = MedicineData:GetRandomSickness()
 			villager.Sickness = sickness
 			villager.NeededMedicine = MedicineData:GetMedicineForSickness(sickness)
+			villager.SickSinceGameTime = GetGameTime()  -- Set sick time for HP calculation
 			villager.LowHPWarned = false
 			table.insert(newSicknesses, villager)
 			UpdateHealthBar(villager)
@@ -326,7 +507,7 @@ function NPCManager:ProcessNewDay()
 		end
 	end
 
-	-- Check for deaths (from HP drain)
+	-- Check for deaths (from HP drain based on game time)
 	for _, villager in pairs(Villagers) do
 		if not villager.IsAlive then
 			table.insert(deaths, villager)
@@ -366,6 +547,67 @@ end
 
 function NPCManager:SetCurrentDay(day)
 	CurrentDay = day
+end
+
+-- ============================================
+-- TEST HELPER FUNCTIONS (prefixed with _)
+-- ============================================
+
+function NPCManager:_reset()
+	Villagers = {}
+	CurrentDay = 1
+	CurrentPhaseIsDay = true
+	CurrentPhaseElapsed = 0
+end
+
+function NPCManager:_setVillagerHP(index, hp)
+	local villager = Villagers[index]
+	if not villager then return end
+
+	-- For testing: directly set HP by adjusting SickSinceGameTime
+	if hp <= 0 then
+		villager.IsAlive = false
+		villager.SickSinceGameTime = 0 -- died long ago
+	else
+		-- Calculate what SickSinceGameTime would need to be for this HP
+		local hpLost = GameConfig.Villager.MaxHP - hp
+		local sickDuration = hpLost / GameConfig.Villager.HPDrainPerSecond
+		villager.SickSinceGameTime = GetGameTime() - sickDuration
+
+		-- Check low HP warning
+		local warningThreshold = GameConfig.Villager.MaxHP * GameConfig.Villager.LowHPWarningPercent
+		if hp <= warningThreshold and not villager.LowHPWarned then
+			villager.LowHPWarned = true
+		end
+	end
+
+	-- Update villager.HP for test access
+	villager.HP = hp
+end
+
+function NPCManager:SimulateDrain(seconds)
+	-- Advance game time
+	CurrentPhaseElapsed = CurrentPhaseElapsed + seconds
+
+	-- Update all villagers
+	for _, villager in pairs(Villagers) do
+		if villager.IsAlive and villager.Sickness then
+			local hp = CalculateVillagerHP(villager)
+			villager.HP = hp
+
+			-- Check low HP warning
+			local warningThreshold = GameConfig.Villager.MaxHP * GameConfig.Villager.LowHPWarningPercent
+			if hp <= warningThreshold and not villager.LowHPWarned then
+				villager.LowHPWarned = true
+			end
+
+			-- Check death
+			if hp <= 0 then
+				villager.IsAlive = false
+				villager.HP = 0
+			end
+		end
+	end
 end
 
 return NPCManager
