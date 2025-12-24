@@ -1,0 +1,215 @@
+================================================================================
+           THE DRUGSTORE ECONOMY GAME - ROBLOX STUDIO SETUP GUIDE
+================================================================================
+
+Ito ang step-by-step guide kung paano i-setup ang mga scripts sa Roblox Studio.
+
+================================================================================
+STEP 1: BUKSAN ANG ROBLOX STUDIO
+================================================================================
+
+1. Buksan ang DrugstoreEconomyGame.rbxl file sa Roblox Studio
+2. Siguruhing makita mo ang Explorer panel (View > Explorer kung hindi visible)
+
+================================================================================
+STEP 2: I-SETUP ANG FOLDER STRUCTURE
+================================================================================
+
+Sa Explorer panel, gumawa ng mga folders:
+
+REPLICATED STORAGE (ReplicatedStorage):
+├── MedicineData (ModuleScript)
+└── GameConfig (ModuleScript)
+
+SERVER SCRIPT SERVICE (ServerScriptService):
+├── GameManager (Script - REGULAR SCRIPT, hindi ModuleScript)
+├── MerchantSystem (ModuleScript)
+├── HouseSystem (ModuleScript)
+├── PlayerData (ModuleScript)
+├── DayNightCycle (ModuleScript)
+└── TentSystem (ModuleScript)
+
+STARTER PLAYER SCRIPTS (StarterPlayer > StarterPlayerScripts):
+└── GameUI (LocalScript)
+
+================================================================================
+STEP 3: I-COPY PASTE ANG MGA SCRIPTS
+================================================================================
+
+Para sa bawat script:
+1. Right-click sa tamang folder
+2. Piliin: Insert Object > (ModuleScript/Script/LocalScript)
+3. I-rename sa tamang pangalan
+4. Double-click para buksan
+5. I-delete lahat ng default code
+6. I-copy paste ang code mula sa Scripts folder
+
+SCRIPT TYPES (IMPORTANTE!):
+- ModuleScript = mga reusable modules (MedicineData, GameConfig, etc.)
+- Script = server-side scripts (GameManager ONLY)
+- LocalScript = client-side scripts (GameUI)
+
+================================================================================
+STEP 4: SCRIPT PLACEMENT SUMMARY
+================================================================================
+
+FILE: Scripts/MedicineData.lua
+  -> PLACE IN: ReplicatedStorage
+  -> TYPE: ModuleScript
+  -> NAME: MedicineData
+
+FILE: Scripts/GameConfig.lua
+  -> PLACE IN: ReplicatedStorage
+  -> TYPE: ModuleScript
+  -> NAME: GameConfig
+
+FILE: Scripts/MerchantSystem.lua
+  -> PLACE IN: ServerScriptService
+  -> TYPE: ModuleScript
+  -> NAME: MerchantSystem
+
+FILE: Scripts/HouseSystem.lua
+  -> PLACE IN: ServerScriptService
+  -> TYPE: ModuleScript
+  -> NAME: HouseSystem
+
+FILE: Scripts/PlayerData.lua
+  -> PLACE IN: ServerScriptService
+  -> TYPE: ModuleScript
+  -> NAME: PlayerData
+
+FILE: Scripts/DayNightCycle.lua
+  -> PLACE IN: ServerScriptService
+  -> TYPE: ModuleScript
+  -> NAME: DayNightCycle
+
+FILE: Scripts/TentSystem.lua
+  -> PLACE IN: ServerScriptService
+  -> TYPE: ModuleScript
+  -> NAME: TentSystem
+
+FILE: Scripts/GameManager.lua
+  -> PLACE IN: ServerScriptService
+  -> TYPE: Script (REGULAR SCRIPT!)
+  -> NAME: GameManager
+
+FILE: Scripts/Client/GameUI.lua
+  -> PLACE IN: StarterPlayer > StarterPlayerScripts
+  -> TYPE: LocalScript
+  -> NAME: GameUI
+
+================================================================================
+STEP 5: I-BUILD ANG VILLAGE MAP
+================================================================================
+
+Kailangan mong gumawa ng mga physical objects sa game:
+
+1. FOUNTAIN (Workspace)
+   - Gumawa ng Part o Model para sa fountain
+   - I-name: "Fountain"
+   - Lagyan sa gitna ng village
+
+2. 8 HOUSES (Workspace)
+   - Gumawa ng 8 bahay na naka-palibot sa fountain
+   - I-name sila: "House1", "House2", ... "House8"
+   - Lagyan ng ClickDetector sa bawat bahay para ma-interact
+   - Lagyan ng BillboardGui para makita kung anong sakit
+
+3. MERCHANT STALL (Workspace)
+   - Gumawa ng stall/shop sa tabi ng fountain
+   - I-name: "Merchant"
+   - Lagyan ng ClickDetector o ProximityPrompt
+
+4. TENT (Workspace)
+   - Gumawa ng tent sa tabi ng merchant
+   - I-name: "Tent"
+   - Lagyan ng ClickDetector para ma-trigger ang sleep
+
+================================================================================
+STEP 6: I-CONNECT ANG PHYSICAL OBJECTS SA SCRIPTS
+================================================================================
+
+Kailangan ng kaunting modifications sa scripts para i-connect
+ang physical objects. Pwede mong dagdagan ng:
+
+-- Sa GameManager.lua, dagdagan sa Initialize function:
+local workspace = game:GetService("Workspace")
+
+-- Find tent and setup
+local tent = workspace:FindFirstChild("Tent")
+if tent then
+    TentSystem:SetupTentTouchPart(tent)
+end
+
+-- Find houses and setup click detectors
+for i = 1, 8 do
+    local house = workspace:FindFirstChild("House" .. i)
+    if house then
+        -- Setup house interaction
+        local clickDetector = house:FindFirstChild("ClickDetector")
+        if not clickDetector then
+            clickDetector = Instance.new("ClickDetector")
+            clickDetector.Parent = house
+        end
+        clickDetector.MouseClick:Connect(function(player)
+            -- Fire event to show house info
+        end)
+    end
+end
+
+================================================================================
+STEP 7: TEST ANG GAME
+================================================================================
+
+1. Click "Play" button sa Roblox Studio
+2. I-check ang Output window para sa errors (View > Output)
+3. Dapat makita mo:
+   - Day/Night cycle gumagana
+   - Merchant may stock
+   - Houses may sakit
+   - Money display sa UI
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+ERROR: "Module not found"
+- Check kung tama ang location ng scripts
+- Check kung tama ang spelling ng script names
+
+ERROR: "Attempt to index nil"
+- Baka may script na hindi pa na-load
+- Gamitin ang :WaitForChild() kung kailangan
+
+ERROR: RemoteEvent errors
+- Check kung nag-run ang GameManager.lua
+- GameManager ang gumagawa ng mga events
+
+GAME NOT STARTING:
+- Check kung Script (hindi ModuleScript) ang GameManager
+- Check ang Output window para sa specific errors
+
+================================================================================
+MGA PWEDENG I-CUSTOMIZE
+================================================================================
+
+Sa GameConfig.lua, pwede mong i-change:
+- StartingMoney (default: 100)
+- BasePrice (default: 8)
+- DayDuration (default: 300 seconds = 5 mins)
+- NightDuration (default: 300 seconds = 5 mins)
+- DaysBeforeDeath (default: 3)
+- TotalHouses (default: 8)
+- StockCount (default: 8 medicines)
+
+Sa MedicineData.lua, pwede mong:
+- Magdagdag ng mga bagong gamot at sakit
+- I-change ang mga pangalan ng gamot
+
+================================================================================
+CONTACT
+================================================================================
+
+Kung may tanong ka pa, tanungin mo lang ako ulit!
+
+Good luck sa game development!
