@@ -11,6 +11,10 @@
       "Modules": {
         "$className": "Folder",
         "$path": "src/server"
+      },
+      "Tests": {
+        "$className": "Folder",
+        "$path": "src/tests"
       }
     },
     "StarterGui": {
