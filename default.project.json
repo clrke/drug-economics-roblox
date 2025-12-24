@@ -1,0 +1,28 @@
+{
+  "name": "DrugstoreEconomyGame",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "$path": "src/shared"
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "$path": "src/server",
+      "Tests": {
+        "$className": "Folder",
+        "$path": "src/tests"
+      }
+    },
+    "StarterGui": {
+      "$className": "StarterGui",
+      "GameUI": {
+        "$className": "ScreenGui",
+        "$properties": {
+          "ResetOnSpawn": false
+        },
+        "$path": "src/client"
+      }
+    }
+  }
+}
